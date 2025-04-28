@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
@@ -24,78 +25,142 @@ road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
 # Verify columns in road_grouped
 print("road_grouped columns:", road_grouped.columns)
 
-# Extract Kwun Tong Road Westbound data as the target (Y)
-kwun_tong_west = road_grouped[road_grouped['Road'] == 'Kwun Tong Road Westbound'].copy()
-if kwun_tong_west.empty:
-    print("Error: No data for Kwun Tong Road Westbound")
-    exit()
-kwun_tong_west['traffic_jam'] = kwun_tong_west['Average_Speed'] <= 50
+# Function to prepare data for a target road
+def prepare_data_for_road(target_road):
+    # Extract target road data as the target (Y)
+    target_data = road_grouped[road_grouped['Road'] == target_road].copy()
+    if target_data.empty:
+        print(f"Error: No data for {target_road}")
+        return None, None, None, None
+    
+    target_data['traffic_jam'] = target_data['Average_Speed'] <= 50
+    
+    # Extract other roads data as features (X)
+    nearby_roads = road_grouped[road_grouped['Road'] != target_road]
+    if nearby_roads.empty:
+        print(f"Error: No data for roads other than {target_road}")
+        return None, None, None, None
+    
+    # Pivot nearby roads data into wide format
+    nearby_features = nearby_roads.pivot_table(
+        index=['Date', 'Hour'],
+        columns='Road',
+        values=['Average_Speed', 'Average_Occupancy', 'Total_Volume'],
+        aggfunc='first'
+    ).reset_index()
+    
+    # Flatten the MultiIndex columns
+    def flatten_columns(col):
+        if isinstance(col, tuple):
+            if col[0] in ['Date', 'Hour'] and col[1] == '':
+                return col[0]
+            return '_'.join(col).strip()
+        return col
+    
+    nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
+    
+    # Merge target road data with nearby road features
+    target_data = target_data[['Date', 'Hour', 'traffic_jam']]
+    data = pd.merge(nearby_features, target_data, on=['Date', 'Hour'], how='inner')
+    
+    if data.empty:
+        print(f"Error: Merge resulted in empty DataFrame for {target_road}")
+        return None, None, None, None
+    
+    # Prepare features (X) and target (Y)
+    X = data.drop(columns=['Date', 'Hour', 'traffic_jam'])
+    Y = data['traffic_jam']
+    
+    # Handle missing values
+    X = X.fillna(X.mean())
+    
+    return X, Y, data, nearby_features.columns.tolist()
 
-# Extract nearby roads data as features (X)
-nearby_roads = road_grouped[road_grouped['Road'] != 'Kwun Tong Road Westbound']
-if nearby_roads.empty:
-    print("Error: No data for nearby roads")
-    exit()
+# Train and evaluate model for a target road
+def train_and_evaluate_model(X, Y, target_road):
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=123)
+    model = LogisticRegression(max_iter=1000)
+    model.fit(X_train, Y_train)
+    
+    # Make predictions and evaluate
+    Y_pred = model.predict(X_test)
+    accuracy = accuracy_score(Y_test, Y_pred)
+    report = classification_report(Y_test, Y_pred)
+    
+    # Print results
+    print(f"\nResults for {target_road}:")
+    print(f"Accuracy: {accuracy}")
+    print("Classification Report:")
+    print(report)
+    
+    # Output logistic regression equation
+    print(f"Logistic Regression Equation for {target_road}:")
+    equation = f"log(P(traffic_jam) / (1 - P(traffic_jam))) = {model.intercept_[0]:.4f}"
+    for coef, feature in zip(model.coef_[0], X.columns):
+        equation += f" + ({coef:.4f}) * {feature}"
+    print(equation)
+    
+    return model, X.columns.tolist()
 
-# Pivot nearby roads data into wide format
-nearby_features = nearby_roads.pivot_table(
-    index=['Date', 'Hour'],
-    columns='Road',
-    values=['Average_Speed', 'Average_Occupancy', 'Total_Volume'],
-    aggfunc='first'
-).reset_index()
+# User input for prediction
+def predict_new_data(model, feature_names, target_road):
+    print(f"\nEnter new data for predicting traffic jam on {target_road}:")
+    input_data = []
+    for feature in feature_names:
+        while True:
+            try:
+                value = float(input(f"Enter value for {feature}: "))
+                input_data.append(value)
+                break
+            except ValueError:
+                print("Please enter a valid number.")
+    
+    # Convert input to numpy array and predict
+    input_array = np.array([input_data])
+    prediction = model.predict(input_array)[0]
+    probability = model.predict_proba(input_array)[0]
+    
+    # Print prediction
+    print(f"\nPrediction for {target_road}:")
+    print("Traffic Jam" if prediction else "No Traffic Jam")
+    print(f"Probability of Traffic Jam: {probability[1]:.4f}")
+    print(f"Probability of No Traffic Jam: {probability[0]:.4f}")
 
-# Flatten the MultiIndex columns, preserving 'Date' and 'Hour'
-def flatten_columns(col):
-    if isinstance(col, tuple):
-        if col[0] in ['Date', 'Hour'] and col[1] == '':
-            return col[0]  # Preserve 'Date' and 'Hour' without underscore
-        return '_'.join(col).strip()  # Join other MultiIndex columns
-    return col
+# Process both directions
+roads = ['Kwun Tong Road Westbound', 'Kwun Tong Road Eastbound']
+models = {}
+feature_names_dict = {}
 
-nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
+for road in roads:
+    X, Y, data, feature_columns = prepare_data_for_road(road)
+    if X is not None and Y is not None:
+        model, feature_names = train_and_evaluate_model(X, Y, road)
+        models[road] = model
+        feature_names_dict[road] = feature_names
+    else:
+        print(f"Skipping {road} due to data issues.")
 
-# Verify columns in nearby_features
-print("nearby_features columns:", nearby_features.columns)
-print("kwun_tong_west columns:", kwun_tong_west.columns)
-
-# Check if 'Date' and 'Hour' exist in both DataFrames
-if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns:
-    print("Error: 'Date' or 'Hour' missing in nearby_features")
-    exit()
-if 'Date' not in kwun_tong_west.columns or 'Hour' not in kwun_tong_west.columns:
-    print("Error: 'Date' or 'Hour' missing in kwun_tong_west")
-    exit()
-
-# Merge Kwun Tong Road Westbound target with nearby road features
-kwun_tong_west = kwun_tong_west[['Date', 'Hour', 'traffic_jam']]
-data = pd.merge(nearby_features, kwun_tong_west, on=['Date', 'Hour'], how='inner')
-
-# Check if merge resulted in empty data
-if data.empty:
-    print("Error: Merge resulted in empty DataFrame. Check if 'Date' and 'Hour' values align between DataFrames.")
-    exit()
-
-# Prepare features (X) and target (Y)
-X = data.drop(columns=['Date', 'Hour', 'traffic_jam'])
-Y = data['traffic_jam']
-
-# Handle missing values by filling with column means
-X = X.fillna(X.mean())
-
-# Split the dataset into training and testing sets
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
-
-# Train a logistic regression model
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, Y_train)
-
-# Make predictions and evaluate the model
-Y_pred = model.predict(X_test)
-accuracy = accuracy_score(Y_test, Y_pred)
-report = classification_report(Y_test, Y_pred)
-
-# Print results
-print(f"Accuracy: {accuracy}")
-print("Classification Report:")
-print(report)
+# Allow user to predict with new data
+while True:
+    print("\nWould you like to predict traffic jam for new data? (yes/no)")
+    choice = input().strip().lower()
+    if choice != 'yes':
+        break
+    
+    print("\nSelect road direction:")
+    print("1. Kwun Tong Road Westbound")
+    print("2. Kwun Tong Road Eastbound")
+    road_choice = input("Enter 1 or 2: ").strip()
+    
+    if road_choice == '1':
+        road = 'Kwun Tong Road Westbound'
+    elif road_choice == '2':
+        road = 'Kwun Tong Road Eastbound'
+    else:
+        print("Invalid choice. Skipping prediction.")
+        continue
+    
+    if road in models:
+        predict_new_data(models[road], feature_names_dict[road], road)
+    else:
+        print(f"No model available for {road}.")
