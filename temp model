@@ -4,7 +4,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 
 # Load the CSV file from the URL
-url = "https://raw.githubusercontent.com/abc"
+url = "https://raw.githubusercontent.com/sytong12/SEEM3650project/refs/heads/main/aggregated_hourly_data.csv"
 df = pd.read_csv(url)
 
 # Aggregate data by road, date, and hour
