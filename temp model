@@ -5,7 +5,14 @@ from sklearn.metrics import accuracy_score, classification_report
 
 # Load the CSV file from the URL
 url = "https://raw.githubusercontent.com/sytong12/SEEM3650project/refs/heads/main/aggregated_hourly_data.csv"
-df = pd.read_csv(url)
+try:
+    df = pd.read_csv(url)
+except Exception as e:
+    print(f"Error loading CSV: {e}")
+    exit()
+
+# Verify column names in the raw data
+print("Raw data columns:", df.columns)
 
 # Aggregate data by road, date, and hour
 road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
@@ -14,12 +21,21 @@ road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
     'Total_Volume': 'sum'
 }).reset_index()
 
+# Verify columns in road_grouped
+print("road_grouped columns:", road_grouped.columns)
+
 # Extract Kwun Tong Road Westbound data as the target (Y)
 kwun_tong_west = road_grouped[road_grouped['Road'] == 'Kwun Tong Road Westbound'].copy()
+if kwun_tong_west.empty:
+    print("Error: No data for Kwun Tong Road Westbound")
+    exit()
 kwun_tong_west['traffic_jam'] = kwun_tong_west['Average_Speed'] <= 50
 
 # Extract nearby roads data as features (X)
 nearby_roads = road_grouped[road_grouped['Road'] != 'Kwun Tong Road Westbound']
+if nearby_roads.empty:
+    print("Error: No data for nearby roads")
+    exit()
 
 # Pivot nearby roads data into wide format
 nearby_features = nearby_roads.pivot_table(
@@ -29,12 +45,36 @@ nearby_features = nearby_roads.pivot_table(
     aggfunc='first'
 ).reset_index()
 
-# Flatten the MultiIndex columns
-nearby_features.columns = ['_'.join(col).strip() for col in nearby_features.columns.values]
+# Flatten the MultiIndex columns, preserving 'Date' and 'Hour'
+def flatten_columns(col):
+    if isinstance(col, tuple):
+        if col[0] in ['Date', 'Hour'] and col[1] == '':
+            return col[0]  # Preserve 'Date' and 'Hour' without underscore
+        return '_'.join(col).strip()  # Join other MultiIndex columns
+    return col
+
+nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
+
+# Verify columns in nearby_features
+print("nearby_features columns:", nearby_features.columns)
+print("kwun_tong_west columns:", kwun_tong_west.columns)
+
+# Check if 'Date' and 'Hour' exist in both DataFrames
+if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns:
+    print("Error: 'Date' or 'Hour' missing in nearby_features")
+    exit()
+if 'Date' not in kwun_tong_west.columns or 'Hour' not in kwun_tong_west.columns:
+    print("Error: 'Date' or 'Hour' missing in kwun_tong_west")
+    exit()
 
 # Merge Kwun Tong Road Westbound target with nearby road features
 kwun_tong_west = kwun_tong_west[['Date', 'Hour', 'traffic_jam']]
 data = pd.merge(nearby_features, kwun_tong_west, on=['Date', 'Hour'], how='inner')
+
+# Check if merge resulted in empty data
+if data.empty:
+    print("Error: Merge resulted in empty DataFrame. Check if 'Date' and 'Hour' values align between DataFrames.")
+    exit()
 
 # Prepare features (X) and target (Y)
 X = data.drop(columns=['Date', 'Hour', 'traffic_jam'])
