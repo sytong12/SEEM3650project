@@ -24,7 +24,7 @@ road_grouped = df.groupby(['Road', 'Date', 'Hour', 'Weekday']).agg({
     'Total_Volume': 'sum'
 }).reset_index()
 
-# Function to prepare data for a target road, including Hour and Weekday as features
+# Function to prepare data for a target road
 def prepare_data_for_road(target_road):
     # Extract target road data as the target (Y)
     target_data = road_grouped[road_grouped['Road'] == target_road].copy()
