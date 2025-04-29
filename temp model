@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import StandardScaler
 
 # Load the CSV file from the URL
 url = "https://raw.githubusercontent.com/sytong12/SEEM3650project/refs/heads/main/aggregated_hourly_data.csv"
@@ -12,18 +13,12 @@ except Exception as e:
     print(f"Error loading CSV: {e}")
     exit()
 
-# Verify column names in the raw data
-print("Raw data columns:", df.columns)
-
 # Aggregate data by road, date, and hour
 road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
     'Average_Speed': 'mean',
     'Average_Occupancy': 'mean',
     'Total_Volume': 'sum'
 }).reset_index()
-
-# Verify columns in road_grouped
-print("road_grouped columns:", road_grouped.columns)
 
 # Function to prepare data for a target road, including Hour as a feature
 def prepare_data_for_road(target_road):
@@ -59,10 +54,6 @@ def prepare_data_for_road(target_road):
     
     nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
     
-    # Verify columns in nearby_features and target_data
-    print(f"nearby_features columns for {target_road}:", nearby_features.columns)
-    print(f"target_data columns for {target_road}:", target_data.columns)
-    
     # Check if 'Date' and 'Hour' exist in both DataFrames
     if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns:
         print(f"Error: 'Date' or 'Hour' missing in nearby_features for {target_road}")
@@ -76,7 +67,7 @@ def prepare_data_for_road(target_road):
     data = pd.merge(nearby_features, target_data, on=['Date', 'Hour'], how='inner')
     
     if data.empty:
-        print(f"Error: Merge resulted in empty DataFrame for {target_road}. Check if 'Date' and 'Hour' values align.")
+        print(f"Error: Merge resulted in empty DataFrame for {target_road}")
         return None, None, None, None
     
     # Prepare features (X) and target (Y), keeping 'Hour' in X
@@ -90,7 +81,11 @@ def prepare_data_for_road(target_road):
 
 # Train and evaluate model for a target road
 def train_and_evaluate_model(X, Y, target_road):
-    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=123)
+    # Scale the features to improve convergence
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    X_train, X_test, Y_train, Y_test = train_test_split(X_scaled, Y, test_size=0.2, random_state=123)
     model = LogisticRegression(max_iter=1000)
     model.fit(X_train, Y_train)
     
@@ -99,9 +94,9 @@ def train_and_evaluate_model(X, Y, target_road):
     accuracy = accuracy_score(Y_test, Y_pred)
     report = classification_report(Y_test, Y_pred)
     
-    # Print results
+    # Print simplified results
     print(f"\nResults for {target_road}:")
-    print(f"Accuracy: {accuracy}")
+    print(f"Accuracy: {accuracy:.4f}")
     print("Classification Report:")
     print(report)
     
@@ -112,10 +107,10 @@ def train_and_evaluate_model(X, Y, target_road):
         equation += f" + ({coef:.4f}) * {feature}"
     print(equation)
     
-    return model, X.columns.tolist()
+    return model, X.columns.tolist(), scaler
 
 # User input for prediction
-def predict_new_data(model, feature_names, target_road):
+def predict_new_data(model, feature_names, target_road, scaler):
     print(f"\nEnter new data for predicting traffic jam on {target_road}:")
     input_data = []
     for feature in feature_names:
@@ -130,10 +125,11 @@ def predict_new_data(model, feature_names, target_road):
             except ValueError:
                 print("Please enter a valid number.")
     
-    # Convert input to numpy array and predict
+    # Convert input to numpy array, scale, and predict
     input_array = np.array([input_data])
-    prediction = model.predict(input_array)[0]
-    probability = model.predict_proba(input_array)[0]
+    input_scaled = scaler.transform(input_array)
+    prediction = model.predict(input_scaled)[0]
+    probability = model.predict_proba(input_scaled)[0]
     
     # Print prediction
     print(f"\nPrediction for {target_road}:")
@@ -145,13 +141,15 @@ def predict_new_data(model, feature_names, target_road):
 roads = ['Kwun Tong Road Westbound', 'Kwun Tong Road Eastbound']
 models = {}
 feature_names_dict = {}
+scalers = {}
 
 for road in roads:
     X, Y, data, feature_columns = prepare_data_for_road(road)
     if X is not None and Y is not None:
-        model, feature_names = train_and_evaluate_model(X, Y, road)
+        model, feature_names, scaler = train_and_evaluate_model(X, Y, road)
         models[road] = model
         feature_names_dict[road] = feature_names
+        scalers[road] = scaler
     else:
         print(f"Skipping {road} due to data issues.")
 
@@ -176,6 +174,6 @@ while True:
         continue
     
     if road in models:
-        predict_new_data(models[road], feature_names_dict[road], road)
+        predict_new_data(models[road], feature_names_dict[road], road, scalers[road])
     else:
         print(f"No model available for {road}.")
