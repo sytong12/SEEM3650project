@@ -13,14 +13,18 @@ except Exception as e:
     print(f"Error loading CSV: {e}")
     exit()
 
-# Aggregate data by road, date, and hour
-road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
+# Convert 'Date' to datetime and extract weekday
+df['Date'] = pd.to_datetime(df['Date'])
+df['Weekday'] = df['Date'].dt.day_name()
+
+# Aggregate data by road, date, hour, and weekday
+road_grouped = df.groupby(['Road', 'Date', 'Hour', 'Weekday']).agg({
     'Average_Speed': 'mean',
     'Average_Occupancy': 'mean',
     'Total_Volume': 'sum'
 }).reset_index()
 
-# Function to prepare data for a target road, including Hour as a feature
+# Function to prepare data for a target road, including Hour and Weekday as features
 def prepare_data_for_road(target_road):
     # Extract target road data as the target (Y)
     target_data = road_grouped[road_grouped['Road'] == target_road].copy()
@@ -38,7 +42,7 @@ def prepare_data_for_road(target_road):
     
     # Pivot nearby roads data into wide format
     nearby_features = nearby_roads.pivot_table(
-        index=['Date', 'Hour'],
+        index=['Date', 'Hour', 'Weekday'],
         columns='Road',
         values=['Average_Speed', 'Average_Occupancy', 'Total_Volume'],
         aggfunc='first'
@@ -47,31 +51,35 @@ def prepare_data_for_road(target_road):
     # Flatten the MultiIndex columns
     def flatten_columns(col):
         if isinstance(col, tuple):
-            if col[0] in ['Date', 'Hour'] and col[1] == '':
+            if col[0] in ['Date', 'Hour', 'Weekday'] and col[1] == '':
                 return col[0]
             return '_'.join(col).strip()
         return col
     
     nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
     
-    # Check if 'Date' and 'Hour' exist in both DataFrames
-    if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns:
-        print(f"Error: 'Date' or 'Hour' missing in nearby_features for {target_road}")
+    # Check if 'Date', 'Hour', and 'Weekday' exist in both DataFrames
+    if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns or 'Weekday' not in nearby_features.columns:
+        print(f"Error: 'Date', 'Hour', or 'Weekday' missing in nearby_features for {target_road}")
         return None, None, None, None
-    if 'Date' not in target_data.columns or 'Hour' not in target_data.columns:
-        print(f"Error: 'Date' or 'Hour' missing in target_data for {target_road}")
+    if 'Date' not in target_data.columns or 'Hour' not in target_data.columns or 'Weekday' not in target_data.columns:
+        print(f"Error: 'Date', 'Hour', or 'Weekday' missing in target_data for {target_road}")
         return None, None, None, None
     
     # Merge target road data with nearby road features
-    target_data = target_data[['Date', 'Hour', 'traffic_jam']]
-    data = pd.merge(nearby_features, target_data, on=['Date', 'Hour'], how='inner')
+    target_data = target_data[['Date', 'Hour', 'Weekday', 'traffic_jam']]
+    data = pd.merge(nearby_features, target_data, on=['Date', 'Hour', 'Weekday'], how='inner')
     
     if data.empty:
         print(f"Error: Merge resulted in empty DataFrame for {target_road}")
         return None, None, None, None
     
-    # Prepare features (X) and target (Y), keeping 'Hour' in X
-    X = data.drop(columns=['Date', 'traffic_jam'])  # Keep 'Hour' in X
+    # One-hot encode Weekday
+    weekday_dummies = pd.get_dummies(data['Weekday'], prefix='is')
+    data = pd.concat([data, weekday_dummies], axis=1)
+    
+    # Prepare features (X) and target (Y), keeping 'Hour' and weekday dummies in X
+    X = data.drop(columns=['Date', 'Weekday', 'traffic_jam'])  # Keep 'Hour' and weekday dummies
     Y = data['traffic_jam']
     
     # Handle missing values by filling with column means
@@ -113,7 +121,22 @@ def train_and_evaluate_model(X, Y, target_road):
 def predict_new_data(model, feature_names, target_road, scaler):
     print(f"\nEnter new data for predicting traffic jam on {target_road}:")
     input_data = []
+    
+    # Prompt for weekday
+    weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    while True:
+        weekday = input("Enter weekday (Monday, Tuesday, ..., Sunday): ").strip().capitalize()
+        if weekday in weekdays:
+            break
+        print("Invalid weekday. Please enter a valid day (Monday, Tuesday, ..., Sunday).")
+    
+    # Create weekday dummy variables
+    weekday_dummies = [1 if w == weekday else 0 for w in weekdays]
+    
+    # Prompt for other features
     for feature in feature_names:
+        if feature.startswith('is_'):  # Skip weekday dummies, handled above
+            continue
         while True:
             try:
                 value = float(input(f"Enter value for {feature}: "))
@@ -124,6 +147,11 @@ def predict_new_data(model, feature_names, target_road, scaler):
                 break
             except ValueError:
                 print("Please enter a valid number.")
+    
+    # Append weekday dummies to input data
+    for i, feature in enumerate(feature_names):
+        if feature.startswith('is_'):
+            input_data.append(weekday_dummies[weekdays.index(feature.replace('is_', ''))])
     
     # Convert input to numpy array, scale, and predict
     input_array = np.array([input_data])
