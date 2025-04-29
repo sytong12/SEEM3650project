@@ -25,7 +25,7 @@ road_grouped = df.groupby(['Road', 'Date', 'Hour']).agg({
 # Verify columns in road_grouped
 print("road_grouped columns:", road_grouped.columns)
 
-# Function to prepare data for a target road
+# Function to prepare data for a target road, including Hour as a feature
 def prepare_data_for_road(target_road):
     # Extract target road data as the target (Y)
     target_data = road_grouped[road_grouped['Road'] == target_road].copy()
@@ -59,22 +59,34 @@ def prepare_data_for_road(target_road):
     
     nearby_features.columns = [flatten_columns(col) for col in nearby_features.columns]
     
+    # Verify columns in nearby_features and target_data
+    print(f"nearby_features columns for {target_road}:", nearby_features.columns)
+    print(f"target_data columns for {target_road}:", target_data.columns)
+    
+    # Check if 'Date' and 'Hour' exist in both DataFrames
+    if 'Date' not in nearby_features.columns or 'Hour' not in nearby_features.columns:
+        print(f"Error: 'Date' or 'Hour' missing in nearby_features for {target_road}")
+        return None, None, None, None
+    if 'Date' not in target_data.columns or 'Hour' not in target_data.columns:
+        print(f"Error: 'Date' or 'Hour' missing in target_data for {target_road}")
+        return None, None, None, None
+    
     # Merge target road data with nearby road features
     target_data = target_data[['Date', 'Hour', 'traffic_jam']]
     data = pd.merge(nearby_features, target_data, on=['Date', 'Hour'], how='inner')
     
     if data.empty:
-        print(f"Error: Merge resulted in empty DataFrame for {target_road}")
+        print(f"Error: Merge resulted in empty DataFrame for {target_road}. Check if 'Date' and 'Hour' values align.")
         return None, None, None, None
     
-    # Prepare features (X) and target (Y)
-    X = data.drop(columns=['Date', 'Hour', 'traffic_jam'])
+    # Prepare features (X) and target (Y), keeping 'Hour' in X
+    X = data.drop(columns=['Date', 'traffic_jam'])  # Keep 'Hour' in X
     Y = data['traffic_jam']
     
-    # Handle missing values
+    # Handle missing values by filling with column means
     X = X.fillna(X.mean())
     
-    return X, Y, data, nearby_features.columns.tolist()
+    return X, Y, data, X.columns.tolist()
 
 # Train and evaluate model for a target road
 def train_and_evaluate_model(X, Y, target_road):
@@ -110,6 +122,9 @@ def predict_new_data(model, feature_names, target_road):
         while True:
             try:
                 value = float(input(f"Enter value for {feature}: "))
+                if feature == 'Hour' and (value < 0 or value > 23):
+                    print("Hour must be between 0 and 23.")
+                    continue
                 input_data.append(value)
                 break
             except ValueError:
